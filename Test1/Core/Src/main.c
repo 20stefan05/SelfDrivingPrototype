@@ -18,7 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "Lidar.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -31,6 +31,17 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define BUTTON_L GPIO_PIN_4 // PB_4 <=> D12
+#define BUTTON_R GPIO_PIN_5 // PB_5 <=> D11
+#define IN1 GPIO_PIN_12 //PA_12 <=> D2
+#define IN2 GPIO_PIN_0 //PB_0 <=> D3
+#define IN3 GPIO_PIN_7 //PB_7 <=> D4
+#define IN4 GPIO_PIN_6 //PB7 <=> D5
+#define EN GPIO_PIN_0 // PA0 <=> A0
+#define UART_BT_TX GPIO_PIN_2 //PA_2 <=> A7
+#define UART_BT_RX GPIO_PIN_3 //PA_3 <=> A2
+
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -39,22 +50,25 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-UART_HandleTypeDef huart1;
+TIM_HandleTypeDef htim2;
+
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-//volatile bool received_flag = false;
-//volatile bool parseData = false;
-uint8_t buff[3*BLOCK_SIZE] = {0};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
-static void MX_USART1_UART_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 uint8_t rxData;
+static uint8_t speed = 0;
+
+enum state{ mvForward, mvBackward, mvLeft, mvRight, Idle};
+enum state currentState = Idle;
+enum state currentManualState = Idle;
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -91,37 +105,49 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART2_UART_Init();
-  MX_USART1_UART_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   HAL_UART_Receive_IT(&huart2,&rxData,1);
-  //DMA transmits 2-byte RESET command over UART1
-//  HAL_UART_Transmit_DMA(&huart1, (uint8_t*) rplidar_reset, 2);
-//  //Send the ultra capsuled mode scan request over DMA
-//   HAL_UART_Transmit_DMA(&huart1, (uint8_t*) rplidar_startscan, 2);
-//
-//   //Clear UART receiving flags
-//   __HAL_UART_CLEAR_IT(&huart1, UART_CLEAR_NEF|UART_CLEAR_OREF);
-//
-//   //Set DMA to receive 8-byte response descriptor, do parse it(parseData==false)
-//   HAL_UART_Receive_DMA(&huart1, buff, 8);
-
-   //Wait until the descriptor is received.
-  // while(!received_flag);
-
-   //With parseData flag on, the DMA "received" interrupt from now will now parse the data packets
-   //received. The interrupt will also set DMA to pend for another 132b block, continuously.
- //  parseData = true;
-
-   //Let the DMA receive blocks continuously
- //  HAL_UART_Receive_DMA(&huart1, buff, BLOCK_SIZE);
-
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-
+  uint8_t changedManually = 0;
   while (1)
   {
+	  switch(currentState){
+	  case mvForward: moveForward(speed); break;
+	  case mvBackward: moveBackward(speed); break;
+	  case mvLeft: moveLeft(speed); break;
+	  case mvRight: moveRight(speed); break;
+	  case Idle: Stop(); break;
+	  }
+	  int8_t count_L = 0, count_R = 0, nrCnt = 100;
+	  while(nrCnt--){
+		  if(HAL_GPIO_ReadPin(GPIOB, BUTTON_L)){
+			  count_L++;
+		  }
+		  else if(!HAL_GPIO_ReadPin(GPIOB, BUTTON_L)){
+		  	  count_L--;
+		  }
+		  if(HAL_GPIO_ReadPin(GPIOB, BUTTON_R)){
+		  			  count_R++;
+		  		  }
+		  else if(!HAL_GPIO_ReadPin(GPIOB, BUTTON_R)){
+		  			  count_R--;
+		  		  }
+
+	  }
+	  if(count_L>75 && count_R>75)  currentManualState = mvForward;
+	  else if(count_L>75) currentManualState = mvLeft;
+	  else if(count_R>75) currentManualState = mvRight;
+	  else if(count_L<-75 && count_R <-75) currentManualState = Idle;
+	  if(currentState!=currentManualState) if(currentState == Idle){ currentState = currentManualState; changedManually = 1;}
+	  if(currentManualState == Idle && changedManually == 1){ currentState = Idle; changedManually = 0;}
+
+
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -159,7 +185,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_MSI;
   RCC_OscInitStruct.PLL.PLLM = 1;
-  RCC_OscInitStruct.PLL.PLLN = 16;
+  RCC_OscInitStruct.PLL.PLLN = 36;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV7;
   RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
   RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
@@ -176,7 +202,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
   {
     Error_Handler();
   }
@@ -186,37 +212,61 @@ void SystemClock_Config(void)
 }
 
 /**
-  * @brief USART1 Initialization Function
+  * @brief TIM2 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_USART1_UART_Init(void)
+static void MX_TIM2_Init(void)
 {
 
-  /* USER CODE BEGIN USART1_Init 0 */
+  /* USER CODE BEGIN TIM2_Init 0 */
 
-  /* USER CODE END USART1_Init 0 */
+  /* USER CODE END TIM2_Init 0 */
 
-  /* USER CODE BEGIN USART1_Init 1 */
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
 
-  /* USER CODE END USART1_Init 1 */
-  huart1.Instance = USART1;
-  huart1.Init.BaudRate = 115200;
-  huart1.Init.WordLength = UART_WORDLENGTH_8B;
-  huart1.Init.StopBits = UART_STOPBITS_1;
-  huart1.Init.Parity = UART_PARITY_NONE;
-  huart1.Init.Mode = UART_MODE_TX_RX;
-  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
-  huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
-  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
-  if (HAL_UART_Init(&huart1) != HAL_OK)
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 0;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 65535;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART1_Init 2 */
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
 
-  /* USER CODE END USART1_Init 2 */
+  /* USER CODE END TIM2_Init 2 */
+  HAL_TIM_MspPostInit(&htim2);
 
 }
 
@@ -289,6 +339,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : PB4 PB5 */
+  GPIO_InitStruct.Pin = GPIO_PIN_4|GPIO_PIN_5;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
 }
 
 /* USER CODE BEGIN 4 */
@@ -296,49 +352,19 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   if(huart->Instance==USART2)
   {
-
-//    if(rxData==78) // Ascii value of 'N' is 78 (N for NO)
-//    {
-//    	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, 0);
-//    	//HAL_UART_Transmit(&huart2, rxData, 1, HAL_MAX_DELAY);
-//
-//    }
-//    else if (rxData==89) // Ascii value of 'Y' is 89 (Y for YES)
-//    {
-//    	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, 1);
-//    }
 	  switch(rxData){
-	  case 70: moveForward(); break;
-	  case 66: {
-		  moveBackward(); break;
+	  case 70: currentState = mvForward; break;
+	  case 66: currentState = mvBackward; break;
+	  case 76: currentState = mvLeft; break;
+	  case 82: currentState = mvRight; break;
+	  case 48 ... 57: speed = rxData-48; break;
+	  case 'S': currentState = Idle;
+
 	  }
-	  case 76: moveLeft(); break;
-	  case 82: moveRight(); break;
-	  default: stop(); break;
-	  }
+	HAL_UART_Transmit(&huart2, (int)rxData, 1, 100);
     HAL_UART_Receive_IT(&huart2,&rxData,1); // Enabling interrupt receive again
   }
-//  else if(huart->Instance==USART1){
-//	  static uint8_t k = 0;
-//	  	static uint8_t previous_k = 2;
-//	  	static uint8_t next_k = 1;
-//
-//	  	if(parseData)
-//	  		{
-//	  			//Set up DMA to receive next packet.
-//	  			HAL_UART_Receive_DMA(&huart1, buff + next_k * BLOCK_SIZE, BLOCK_SIZE);
-//
-//	  			k++;
-//	  			previous_k++;
-//	  			next_k++;
-//	  			if(k >= 3) k = 0;
-//	  			if(previous_k >= 3) previous_k = 0;
-//	  			if(next_k >= 3) next_k = 0;
-//	  		}
-//	  		//In main, this flag is used only once.
-//	  		//Can be used to indicate that DMA has finished receiving data.
-//	  		received_flag = true;
-//  }
+
 }
 /* USER CODE END 4 */
 
