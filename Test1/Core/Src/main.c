@@ -21,7 +21,10 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <string.h>
+#include <stdio.h>
+#include "Lights.h"
+#include "Config.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -31,15 +34,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define BUTTON_L GPIO_PIN_4 // PB_4 <=> D12
-#define BUTTON_R GPIO_PIN_5 // PB_5 <=> D11
-#define IN1 GPIO_PIN_12 //PA_12 <=> D2
-#define IN2 GPIO_PIN_0 //PB_0 <=> D3
-#define IN3 GPIO_PIN_7 //PB_7 <=> D4
-#define IN4 GPIO_PIN_6 //PB7 <=> D5
-#define EN GPIO_PIN_0 // PA0 <=> A0
-#define UART_BT_TX GPIO_PIN_2 //PA_2 <=> A7
-#define UART_BT_RX GPIO_PIN_3 //PA_3 <=> A2
 
 
 /* USER CODE END PD */
@@ -50,6 +44,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+
 TIM_HandleTypeDef htim2;
 
 UART_HandleTypeDef huart2;
@@ -60,15 +56,18 @@ UART_HandleTypeDef huart2;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_USART2_UART_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_ADC1_Init(void);
+static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 uint8_t rxData;
 static uint8_t speed = 0;
 
 enum state{ mvForward, mvBackward, mvLeft, mvRight, Idle};
+enum lightState{On, Off};
 enum state currentState = Idle;
 enum state currentManualState = Idle;
+enum lightState currentLightState = Off;
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -104,11 +103,13 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_USART2_UART_Init();
   MX_TIM2_Init();
+  MX_ADC1_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
   HAL_UART_Receive_IT(&huart2,&rxData,1);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -138,6 +139,7 @@ int main(void)
 		  			  count_R--;
 		  		  }
 
+
 	  }
 	  if(count_L>75 && count_R>75)  currentManualState = mvForward;
 	  else if(count_L>75) currentManualState = mvLeft;
@@ -146,6 +148,10 @@ int main(void)
 	  if(currentState!=currentManualState) if(currentState == Idle){ currentState = currentManualState; changedManually = 1;}
 	  if(currentManualState == Idle && changedManually == 1){ currentState = Idle; changedManually = 0;}
 
+	  switch(currentLightState){
+	  case On: LightsAdjustByIntensity(); break;
+	  case Off: LightsOff(); break;
+	  }
 
 
     /* USER CODE END WHILE */
@@ -212,6 +218,62 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+  /** Common config
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV1;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  hadc1.Init.LowPowerAutoWait = DISABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;
+  hadc1.Init.OversamplingMode = DISABLE;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_16;
+  sConfig.Rank = ADC_REGULAR_RANK_1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_2CYCLES_5;
+  sConfig.SingleDiff = ADC_SINGLE_ENDED;
+  sConfig.OffsetNumber = ADC_OFFSET_NONE;
+  sConfig.Offset = 0;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
   * @brief TIM2 Initialization Function
   * @param None
   * @retval None
@@ -260,6 +322,10 @@ static void MX_TIM2_Init(void)
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -342,7 +408,7 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pins : PB4 PB5 */
   GPIO_InitStruct.Pin = GPIO_PIN_4|GPIO_PIN_5;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
 }
@@ -358,7 +424,9 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 	  case 76: currentState = mvLeft; break;
 	  case 82: currentState = mvRight; break;
 	  case 48 ... 57: speed = rxData-48; break;
-	  case 'S': currentState = Idle;
+	  case 'S': currentState = Idle;break;
+	  case 'w': currentLightState = On; break;
+	  case 'W': currentLightState = Off; break;
 
 	  }
 	HAL_UART_Transmit(&huart2, (int)rxData, 1, 100);
