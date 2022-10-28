@@ -13,15 +13,17 @@ static void MX_TIM2_Init(void);
 static void MX_ADC1_Init(void);
 
 
-void LightsAdjustByIntensity(){
+void LightsAdjustByIntensity(void){
+	uint32_t AD_RES = 0u;
+	uint32_t PwmVal = 0u;
 	HAL_ADC_Start(&hadc1);
-	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
-    uint16_t AD_RES = HAL_ADC_GetValue(&hadc1);
-    uint16_t pwmVal = 65535*AD_RES/(DARKEST_ADC_VAL);
-    TIM2->CCR2 = pwmVal;
+		HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+		AD_RES = HAL_ADC_GetValue(&hadc1);
+		PwmVal = PWM_MAX*AD_RES/(DARKEST_ADC_VAL);
+		TIM2->CCR2 = PwmVal;
 }
-void LightsOff(){
-    TIM2->CCR2 = 0;
+void LightsOff(void){
+    TIM2->CCR2 = 0u;
 }
 /**
   * @brief ADC1 Initialization Function

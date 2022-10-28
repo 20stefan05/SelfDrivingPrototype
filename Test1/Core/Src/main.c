@@ -24,7 +24,10 @@
 #include <string.h>
 #include <stdio.h>
 #include "Lights.h"
+#include "Motors.h"
+#include "SWTimer.h"
 #include "Config.h"
+#include "Lidar.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -40,15 +43,17 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
 
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim6;
 
+UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
+DMA_HandleTypeDef hdma_usart1_rx;
 
 /* USER CODE BEGIN PV */
 /* USER CODE END PV */
@@ -58,21 +63,184 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_ADC1_Init(void);
+static void MX_DMA_Init(void);
+static void MX_USART1_UART_Init(void);
+static void MX_TIM6_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
-uint8_t rxData;
-static uint8_t speed = 0;
+uint8_t RxData;
+static uint8_t Speed = 0;
 
-enum state{ mvForward, mvBackward, mvLeft, mvRight, Idle};
-enum lightState{On, Off};
-enum state currentState = Idle;
-enum state currentManualState = Idle;
-enum lightState currentLightState = Off;
+enum State{ MvForward, MvBackward, MvLeft, MvRight, Idle};
+enum AutonomyLevel {Manual, Autonomous};
+enum LightState{On, Off};
+enum State CurrentState = Idle;
+enum State CurrentManualState = Idle;
+enum LightState CurrentLightState = Off;
+enum AutonomyLevel CurrentAutonomy = Manual;
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+ uint8_t LidarRxBuff[BUFF_SIZE] = {0};
+static bool LidarStarted = false; /* variable to check if the Lidar sensor has sent the first buffer of data */
+static bool StartDataProcessing = false;
+static bool Received = false;
+bool Debug_Received = false;
+static float PosX[FULL_CIRCLE];
+static float PosY[FULL_CIRCLE];
+uint64_t Millis = 0;
+uint8_t LidarState = LIDAR_ON;
+uint8_t ChangedManually = NOT_CHANGED_MAN; /* check if the state of the motors was manually changed */
+extern uint64_t Interval;
 
+static bool InRange(float Val, float Delta){
+	bool ToReturn = false;
+		if((Val<Delta) && (Val>(-1)*Delta))
+		{
+			ToReturn = true;
+		}
+		else
+		{
+			ToReturn = false;
+		}
+	return ToReturn;
+}
+
+void selfDrive(){
+//	uint16_t Idx = 0;
+//	bool FoundAng = false;
+//		if(LidarStarted == false)
+//		{
+//			LidarInit(LidarRxBuff, (&Received), &huart1, &LidarState);
+//			LidarStarted = true;
+//		}
+//		else if(LidarState == LIDAR_ON)
+//		{
+//		LidarGetData(LidarRxBuff, StartDataProcessing, PosX, PosY, LidarState);
+//		for(Idx = 0; (Idx<FULL_CIRCLE) && (FoundAng == false); Idx++)
+//		{
+//			if(InRange(Angles[Idx], ANG_DIST_ERR) == true)
+//			{
+//				FoundAng = true;
+//			}
+//		}
+//		if(Idx!=FULL_CIRCLE)
+//		{
+//			if((InRange(Distances[Idx], ANG_DIST_ERR) == false) && (Distances[Idx]>MIN_DIST))
+//			{
+//				MoveForward(AUTO_SPD);
+//			}
+//			else
+//			{
+//				Stop();
+//			}
+//		}
+//		else
+//		{
+//			Stop();
+//		}
+//		}
+//		else
+//		{
+//			CurrentAutonomy = Manual;
+//		}
+}
+void stateRoutine(){
+	int32_t DebounceCount_L = 0;
+	int32_t DebounceCount_R = 0;
+	int8_t NrCnt = 0;
+		switch (CurrentState)
+		{
+		case MvForward:
+			MoveForward(Speed);
+			break;
+		case MvBackward:
+			MoveBackward(Speed);
+			break;
+		case MvLeft:
+			MoveLeft(Speed);
+			break;
+		case MvRight:
+			MoveRight(Speed);
+			break;
+		case Idle:
+			Stop();
+			break;
+		default: break;
+		}
+		/* check if the buttons are pressed */
+		for (NrCnt = 0; NrCnt<MAX_CNT; NrCnt++) {
+			if (HAL_GPIO_ReadPin(BUTTON_REGISTER, BUTTON_L)==GPIO_PIN_SET)
+			{
+				DebounceCount_L++;
+			}
+			else if (HAL_GPIO_ReadPin(BUTTON_REGISTER, BUTTON_L) == GPIO_PIN_RESET)
+			{
+				DebounceCount_L--;
+			}
+			else
+			{
+				/* MISRA Requirement */
+			}
+			if (HAL_GPIO_ReadPin(BUTTON_REGISTER, BUTTON_R) == GPIO_PIN_SET)
+			{
+				DebounceCount_R++;
+			}
+			else if (HAL_GPIO_ReadPin(BUTTON_REGISTER, BUTTON_R)==GPIO_PIN_RESET)
+			{
+				DebounceCount_R--;
+			}
+			else
+			{
+
+			}
+
+		}
+		/* change the global car state if one of the buttons in pressed */
+		if ((DebounceCount_L > MIN_PRESSED_VAL) && (DebounceCount_R > MIN_PRESSED_VAL))
+		{
+			CurrentManualState = MvForward;
+		}
+		else if (DebounceCount_L > MIN_PRESSED_VAL)
+		{
+			CurrentManualState = MvLeft;
+		}
+		else if (DebounceCount_R > MIN_PRESSED_VAL)
+		{
+			CurrentManualState = MvRight;
+		}
+		else if ((DebounceCount_L < MIN_UNPRESSED_VAL) && (DebounceCount_R < MIN_UNPRESSED_VAL))
+		{
+			CurrentManualState = Idle;
+		}
+		else
+		{
+
+		}
+		if (CurrentState != CurrentManualState)
+		{
+			if (CurrentState == Idle)
+			{
+				CurrentState = CurrentManualState;
+				ChangedManually = CHANGED_MAN;
+			}
+		}
+		if ((CurrentManualState == Idle) && (ChangedManually == CHANGED_MAN)) {
+			CurrentState = Idle;
+			ChangedManually = NOT_CHANGED_MAN;
+		}
+		/* check the light state and turn it on/off accordingly */
+		switch (CurrentLightState) {
+		case On:
+			LightsAdjustByIntensity();
+			break;
+		case Off:
+			LightsOff();
+			break;
+		default: break;
+		}
+}
 /* USER CODE END 0 */
 
 /**
@@ -105,55 +273,34 @@ int main(void)
   MX_GPIO_Init();
   MX_TIM2_Init();
   MX_ADC1_Init();
+  MX_DMA_Init();
+  MX_USART1_UART_Init();
+  MX_TIM6_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  HAL_UART_Receive_IT(&huart2,&rxData,1);
+  HAL_UART_Receive_IT(&huart2,&RxData,1);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
+  HAL_TIM_Base_Start_IT(&htim6);
+  LidarInit(LidarRxBuff, &Received, &huart1, &LidarState);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  uint8_t changedManually = 0;
   while (1)
   {
-	  switch(currentState){
-	  case mvForward: moveForward(speed); break;
-	  case mvBackward: moveBackward(speed); break;
-	  case mvLeft: moveLeft(speed); break;
-	  case mvRight: moveRight(speed); break;
-	  case Idle: Stop(); break;
+	  LidarGetData(LidarRxBuff, StartDataProcessing, PosX, PosY, LidarState);
+	  /* implement actions depending o the current state of the car */
+#ifndef DEBUG_STATE
+	  if(CurrentAutonomy == Autonomous)
+	  {
+		  selfDrive();
 	  }
-	  int8_t count_L = 0, count_R = 0, nrCnt = 100;
-	  while(nrCnt--){
-		  if(HAL_GPIO_ReadPin(GPIOB, BUTTON_L)){
-			  count_L++;
-		  }
-		  else if(!HAL_GPIO_ReadPin(GPIOB, BUTTON_L)){
-		  	  count_L--;
-		  }
-		  if(HAL_GPIO_ReadPin(GPIOB, BUTTON_R)){
-		  			  count_R++;
-		  		  }
-		  else if(!HAL_GPIO_ReadPin(GPIOB, BUTTON_R)){
-		  			  count_R--;
-		  		  }
-
-
+	  else
+	  {
+		stateRoutine();
 	  }
-	  if(count_L>75 && count_R>75)  currentManualState = mvForward;
-	  else if(count_L>75) currentManualState = mvLeft;
-	  else if(count_R>75) currentManualState = mvRight;
-	  else if(count_L<-75 && count_R <-75) currentManualState = Idle;
-	  if(currentState!=currentManualState) if(currentState == Idle){ currentState = currentManualState; changedManually = 1;}
-	  if(currentManualState == Idle && changedManually == 1){ currentState = Idle; changedManually = 0;}
-
-	  switch(currentLightState){
-	  case On: LightsAdjustByIntensity(); break;
-	  case Off: LightsOff(); break;
-	  }
-
-
+#endif
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -337,6 +484,79 @@ static void MX_TIM2_Init(void)
 }
 
 /**
+  * @brief TIM6 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM6_Init(void)
+{
+
+  /* USER CODE BEGIN TIM6_Init 0 */
+
+  /* USER CODE END TIM6_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM6_Init 1 */
+
+  /* USER CODE END TIM6_Init 1 */
+  htim6.Instance = TIM6;
+  htim6.Init.Prescaler = 71;
+  htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim6.Init.Period = 1000;
+  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM6_Init 2 */
+
+  /* USER CODE END TIM6_Init 2 */
+
+}
+
+/**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -368,6 +588,22 @@ static void MX_USART2_UART_Init(void)
   /* USER CODE BEGIN USART2_Init 2 */
 
   /* USER CODE END USART2_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Channel5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel5_IRQn);
 
 }
 
@@ -414,26 +650,80 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
-{
-  if(huart->Instance==USART2)
-  {
-	  switch(rxData){
-	  case 70: currentState = mvForward; break;
-	  case 66: currentState = mvBackward; break;
-	  case 76: currentState = mvLeft; break;
-	  case 82: currentState = mvRight; break;
-	  case 48 ... 57: speed = rxData-48; break;
-	  case 'S': currentState = Idle;break;
-	  case 'w': currentLightState = On; break;
-	  case 'W': currentLightState = Off; break;
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+	if (huart->Instance == USART2)
+	{
+		if (RxData == AUTO_CMD)
+		{
+			CurrentAutonomy = Autonomous;
+		}
+		else if (RxData == MAN_CMD)
+		{
+			CurrentAutonomy = Manual;
+		}
+		else
+		{
 
-	  }
-	HAL_UART_Transmit(&huart2, (int)rxData, 1, 100);
-    HAL_UART_Receive_IT(&huart2,&rxData,1); // Enabling interrupt receive again
-  }
-
+		}
+		if (CurrentAutonomy == Manual)
+		{
+			switch (RxData)
+			{
+			case MV_FWD_CMD:
+				CurrentState = MvForward;
+				break;
+			case MV_BWD_CMD:
+				CurrentState = MvBackward;
+				break;
+			case MV_LEFT_CMD:
+				CurrentState = MvLeft;
+				break;
+			case MV_RIGHT_CMD:
+				CurrentState = MvRight;
+				break;
+			case STOP_CMD:
+				CurrentState = Idle;
+				break;
+			case LIGHT_ON_CMD:
+				CurrentLightState = On;
+				break;
+			case LIGHT_OFF_CMD:
+				CurrentLightState = Off;
+				break;
+			default:
+				if ((RxData >= MIN_SPEED_CMD) && (RxData <= MAX_SPEED_CMD))
+				{
+					Speed = RxData - '0';
+				}
+				break;
+			}
+		}
+		HAL_UART_Transmit(&huart2, &RxData, BT_BUFF_SIZE, WAIT_TIME);
+		HAL_UART_Receive_IT(&huart2, &RxData, BT_BUFF_SIZE);
+	}
+	else if (huart->Instance == USART1)
+	{
+		Millis = Interval;
+		Received = true;
+		HAL_UART_Receive_DMA(&huart1, LidarRxBuff, BUFF_SIZE);
+		if (LidarStarted != false) {
+			if (StartDataProcessing == false)
+			{
+				StartDataProcessing = true;
+			}
+		}
+		else
+		{
+			LidarStarted = true;
+		}
+	}
+	else
+	{
+		/* MISRA Requirement */
+	}
 }
+
+
 /* USER CODE END 4 */
 
 /**

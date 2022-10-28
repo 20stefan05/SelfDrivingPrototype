@@ -47,7 +47,31 @@ extern "C" {
 
 /* Exported macro ------------------------------------------------------------*/
 /* USER CODE BEGIN EM */
-
+#define DEBUG_STATE
+#define FULL_CIRCLE (360u)
+#define LIDAR_ON (1u)
+#define LIDAR_OFF (0u)
+#define CHANGED_MAN (1u)
+#define NOT_CHANGED_MAN (0u)
+#define ANG_DIST_ERR (0.5f)
+#define MIN_DIST (160.0f)
+#define AUTO_SPD (6u)
+#define MAX_CNT (100u)
+#define MIN_PRESSED_VAL (75)
+#define MIN_UNPRESSED_VAL (-75)
+#define AUTO_CMD ('p')
+#define MAN_CMD ('P')
+#define MV_FWD_CMD (70u)
+#define MV_BWD_CMD (66u)
+#define MV_LEFT_CMD (76u)
+#define MV_RIGHT_CMD (82u)
+#define MIN_SPEED_CMD (48u)
+#define MAX_SPEED_CMD (57u)
+#define STOP_CMD ('S')
+#define LIGHT_ON_CMD ('w')
+#define LIGHT_OFF_CMD ('W')
+#define WAIT_TIME (100u)
+#define BT_BUFF_SIZE (1u)
 /* USER CODE END EM */
 
 void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
